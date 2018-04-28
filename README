@@ -33,10 +33,10 @@ First, add the following line to /etc/hosts, so the name 'vpnlabserver.com'
 is mapped to your server's IP address (server_ip should be replaced by a 
 real IP address):
  
-server_ip     vpnlabserver.com
+server_ip     xie.com
  
 Now, we can run the client program (our server listens to port 4433):
-$ ./tlsclient vpnlabserver.com  4433
+$ ./tlsclient xie.com  4433
 
 We have put two CA certificates in the ./ca_client folder: one is the 
 CA that signs our server certificate, and the other is the CA that 
