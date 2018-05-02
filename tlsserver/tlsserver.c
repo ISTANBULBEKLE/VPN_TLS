@@ -21,7 +21,6 @@ struct sockaddr_in peerAddr;
 int  setupTCPServer();                   // Defined in Listing 19.10
 void processRequest(SSL* ssl, int sock); // Defined in Listing 19.12
 
-
 int Authen_client(SSL* ssl, int sockfd, fd_set readFDSet)
 {
     char username[256], passwd[256];
@@ -31,9 +30,6 @@ int Authen_client(SSL* ssl, int sockfd, fd_set readFDSet)
     bzero(passwd, 256);
 
 
-      //fd_set readFDSet;
-      //SSL_set_fd (ssl, sockfd);
-      //int err = SSL_accept (ssl);    
       printf ("Authentication: SSL connection\n");
   
       while(1){
@@ -88,8 +84,16 @@ int main(){
   
   while(1){
     int sock = accept(listen_sock, (struct sockaddr*)&sa_client, &client_len);
-    
-    if (fork() == 0) { // The child process
+   
+    int pipefd[2]; 
+    int cpid = fork();
+    if (cpid == -1) {
+          perror("fork");
+          exit(EXIT_FAILURE);
+    }
+
+    if (cpid == 0) { // The child process
+        
        close (listen_sock);
 
        SSL_set_fd (ssl, sock);
@@ -98,20 +102,25 @@ int main(){
        printf ("SSL connection established!\n");
        fd_set readFDSet;
        if (Authen_client(ssl, sock, readFDSet)== -1) {printf("client authenticated failed!"); exit(1);}
-    
+ 
        while(1){ //child process keep alive 
        FD_ZERO(&readFDSet);
        FD_SET(sock, &readFDSet);
+       //FD_SET(pipefd[0],&readFDSet);
        FD_SET(tunfd, &readFDSet);
        select(FD_SETSIZE, &readFDSet, NULL, NULL, NULL);
   
-       if (FD_ISSET(tunfd,  &readFDSet)) tunSelected(tunfd, ssl);
-       if (FD_ISSET(sock, &readFDSet)) socketSelected(tunfd,ssl);
+        if (FD_ISSET(tunfd,  &readFDSet)) tunSelected(tunfd, ssl);
+        //if (FD_ISSET(pipefd[0],  &readFDSet)) pipeSelected(pipefd[0], ssl);
+        if (FD_ISSET(sock, &readFDSet)) socketSelected(tunfd,ssl);
     //   close(sock);
     //   return 0;
        usleep(100000);}
     } else { // The parent process
-        close(sock);
+       close(sock);
+       //fd_set readFDSet;
+       //FD_SET(tunfd, &readFDSet);
+       //if (FD_ISSET(tunfd,  &readFDSet)) tunSelected(tunfd, ssl, pipefd[1]);
    }
     usleep(100000);
   }
@@ -136,27 +145,6 @@ int setupTCPServer()
     return listen_sock;
 }
 
-/*void processRequest(SSL* ssl, int sock)
-{
-    char buf[1024];
-    int len = SSL_read (ssl, buf, sizeof(buf) - 1);
-    buf[len] = '\0';
-    printf("Received: %s\n",buf);
-
-    // Construct and send the HTML page
-    char *html =
-	"HTTP/1.1 200 OK\r\n"
-	"Content-Type: text/html\r\n\r\n"
-	"<!DOCTYPE html><html>"
-	"<head><title>Hello World</title></head>"
-	"<style>body {background-color: black}"
-	"h1 {font-size:3cm; text-align: center; color: white;"
-	"text-shadow: 0 0 3mm yellow}</style></head>"
-	"<body><h1>Hello, world!</h1></body></html>";
-    SSL_write(ssl, html, strlen(html));
-//    SSL_shutdown(ssl);  SSL_free(ssl);
-}*/
-
 int createTunDevice() {
    int tunfd;
    struct ifreq ifr;
@@ -170,32 +158,79 @@ int createTunDevice() {
    return tunfd;
 }
 
-void tunSelected(int tunfd, SSL* ssl){
+//child write to ssl
+void pipeSelected(int fd, SSL* ssl){
     int  len;
-    char buff[BUFF_SIZE];
+    unsigned char buff[BUFF_SIZE];
+    char dst_ip[20];
+
+    printf("Got a packet from parent pipe\n");
+
+    bzero(buff, BUFF_SIZE); 
+    len = read(fd, buff, BUFF_SIZE);
+   
+  // Destination addr
+    sprintf(dst_ip,"%d.%d.%d.%d",(unsigned char)(buff[16]),
+                        (unsigned char)(buff[17]),
+                        (unsigned char)(buff[18]),
+                        (unsigned char)(buff[19]));
+     printf("dst:%s\n",dst_ip);
+     SSL_write(ssl, buff, len);
+}
+
+//parent send to child
+void tunSelected(int tunfd, SSL* ssl, int fd){
+    int  len;
+    unsigned char buff[BUFF_SIZE];
+    char dst_ip[20];
 
     printf("Got a packet from tunfd\n");
   
     bzero(buff, BUFF_SIZE);
     len = read(tunfd, buff, BUFF_SIZE);
-    //printf("from tunfd:%s, len:%d\n",buff,len);
-    
-    SSL_write(ssl, buff, len);
-    //SSL_shutdown(ssl);  SSL_free(ssl);
+
+     printf("From:%d.%d.%d.%d\n",(unsigned char)(buff[12]),
+                        (unsigned char)(buff[13]),
+                        (unsigned char)(buff[14]),
+                        (unsigned char)(buff[15]));
+ 
+   
+  // Destination addr
+    sprintf(dst_ip,"%d.%d.%d.%d",(unsigned char)(buff[16]),
+                        (unsigned char)(buff[17]),
+                        (unsigned char)(buff[18]),
+                        (unsigned char)(buff[19])); 
+       printf("To:%s\n",dst_ip);
+       //SSL_write(ssl, buff, len);
+//       write(fd, buff, BUFF_SIZE);
+     SSL_write(ssl, buff, len);
 }
 
-void socketSelected (int tunfd, SSL* ssl){
+void socketSelected (int tunfd, SSL* ssl) {
     int  len;
-    char buff[BUFF_SIZE];
+    unsigned char buff[BUFF_SIZE];
+    unsigned char dst_ip[20];
 
-    printf("Got a packet from the ssl\n");
+    printf("Got a packet from the ssl socket\n");
 
     bzero(buff, BUFF_SIZE);
     len = SSL_read(ssl, buff, BUFF_SIZE);
+
+    sprintf(dst_ip,"%d.%d.%d.%d",(unsigned char)(buff[12]),
+                        (unsigned char)(buff[13]),
+                        (unsigned char)(buff[14]),
+                        (unsigned char)(buff[15]));
+    printf("From:%s\n",dst_ip);
+    // Destination addr
+    printf("To:%d.%d.%d.%d\n", (unsigned char)(buff[16]),
+                        (unsigned char)(buff[17]),
+                        (unsigned char)(buff[18]),
+                        (unsigned char)(buff[19])); 
    // buff[len] = '\0';
    // printf("from ssl:%s, len:%d\n",buff,len); 
     write(tunfd, buff, len);
 }
+
 
 
 
