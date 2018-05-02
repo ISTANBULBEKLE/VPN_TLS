@@ -71,7 +71,8 @@ int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx)
        int err = X509_STORE_CTX_get_error(x509_ctx);
        printf("Verification failed: %s.\n",
                     X509_verify_cert_error_string(err));
-    }
+       return 0; 
+   }
 }
 
 SSL* setupTLSClient(const char* hostname)
@@ -89,7 +90,7 @@ SSL* setupTLSClient(const char* hostname)
    meth = (SSL_METHOD *)TLSv1_2_method();
    ctx = SSL_CTX_new(meth);
 
-   SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+   SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback);
    if(SSL_CTX_load_verify_locations(ctx,NULL, CA_DIR) < 1){
 	printf("Error setting the verify locations. \n");
 	exit(0);
